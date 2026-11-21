@@ -1,312 +1,327 @@
 #!/usr/bin/env python3
-"""Render the 21 November 2026 world-news front page as entry.png.
+"""Render the front-page infographic for Saturday 21 November 2026.
 
-Build-time script only. It runs here on this workstation with Pillow and
-the DejaVu fonts; the graded entry, main.py, merely copies the finished
-PNG, so grading needs nothing but the Python standard library. The
-drawing is fully deterministic: fixed text, fixed geometry, no clock,
-no network, no randomness, so the same inputs always give the same
-bytes.
-
-Stories verified as happening, or first reported, on Saturday
-21 November 2026 (sources in README.md):
-  1. Russian missiles land in Poland during a huge overnight barrage
-     on Ukraine; Tusk calls it a deliberate provocation, NATO a grave
-     violation (AP / Reuters)
-  2. Wall Street slides into correction as the AI sell-off deepens:
-     S&P 500 -3.7%, Nasdaq -5.3%, Anthropic -8.5% on day two (Reuters,
-     CNN, New York Post)
-  3. The World Court finds Myanmar guilty of Rohingya genocide, the
-     first time a state is found guilty of genocide; Myanmar rejects
-     the ruling (UN News, Le Monde, CNN)
-  4. JPMorgan, Visa and Mastercard confirm customer data exposed in a
-     breach of third-party vendors; no card numbers taken (Reuters,
-     Cybersecurity Dive)
-  5. Britain and the EU sign deals on food trade, carbon markets and
-     youth mobility (BBC)
-  6. Israel's president asks Gadi Eisenkot to form the next
-     government, bypassing Benjamin Netanyahu (The Paris Eye)
+Draws one 1024x1024 PNG with Pillow: a newspaper masthead, one lead
+story, two middle stories and three lower stories, all verified news
+from that day. Run from the entry directory; writes entry.png beside
+this file. No network, no input files.
 """
 
+import math
 import os
 
 from PIL import Image, ImageDraw, ImageFont
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-OUT_PATH = os.path.join(HERE, "entry.png")
+CANVAS_W = 1024
+CANVAS_H = 1024
 
-W, H = 1024, 1024
-PAPER = (247, 243, 232)
-INK = (26, 31, 42)
-MUTED = (84, 82, 75)
-NAVY = (27, 42, 74)
-CRIMSON = (165, 42, 34)
-GOLD = (201, 162, 39)
-GOLD_DARK = (148, 102, 20)
+PAPER = (246, 241, 227)
+INK = (31, 36, 48)
+SOFT_INK = (74, 78, 88)
 CARD = (255, 255, 255)
-RULE = (205, 198, 177)
-SLATE = (102, 104, 100)
+CARD_EDGE = (198, 190, 168)
+RED = (179, 38, 30)
+NAVY = (31, 56, 100)
+GOLD = (146, 104, 12)
+TEAL = (15, 118, 110)
+PURPLE = (107, 33, 168)
+GREEN = (22, 101, 52)
+PALE_RED = (253, 236, 236)
+PALE_BLUE = (232, 238, 248)
+PALE_GOLD = (248, 240, 214)
+PALE_TEAL = (224, 242, 240)
+PALE_PURPLE = (240, 232, 250)
+PALE_GREEN = (228, 242, 230)
+FOOTER_GREY = (110, 108, 96)
 
-BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-PLAIN = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+FONT_DIR = "/usr/share/fonts/truetype/dejavu"
 
 
-def face(path, size):
-    return ImageFont.truetype(path, size)
+def load_font(name, size):
+    path = os.path.join(FONT_DIR, name)
+    try:
+        return ImageFont.truetype(path, size)
+    except OSError:
+        return ImageFont.load_default(size=size)
 
 
-def wrap_text(text, font_obj, max_w):
-    """Greedy word wrap; returns lines that fit max_w pixels."""
-    lines, cur = [], ""
-    for word in text.split():
-        trial = word if not cur else cur + " " + word
-        if font_obj.getlength(trial) <= max_w:
-            cur = trial
+def serif_bold(size):
+    return load_font("DejaVuSerif-Bold.ttf", size)
+
+
+def sans(size):
+    return load_font("DejaVuSans.ttf", size)
+
+
+def sans_bold(size):
+    return load_font("DejaVuSans-Bold.ttf", size)
+
+
+def wrap_lines(draw, text, font, max_width):
+    """Greedy word wrap; returns a list of lines that fit max_width."""
+    words = text.split()
+    lines = []
+    current = ""
+    for word in words:
+        trial = word if not current else current + " " + word
+        if draw.textlength(trial, font=font) <= max_width:
+            current = trial
         else:
-            if cur:
-                lines.append(cur)
-            cur = word
-    if cur:
-        lines.append(cur)
+            if current:
+                lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
     return lines
 
 
-def best_fit(text, sizes, max_w, max_lines, path):
-    """Largest size from sizes whose wrap needs at most max_lines."""
-    for size in sizes:
-        f = face(path, size)
-        rows = wrap_text(text, f, max_w)
-        if len(rows) <= max_lines:
-            return f, rows
-    f = face(path, sizes[-1])
-    return f, wrap_text(text, f, max_w)[:max_lines]
+def draw_block(draw, x, y, width, text, font, fill, leading, align="left"):
+    """Draw wrapped text; returns the y just below the last line."""
+    for line in wrap_lines(draw, text, font, width):
+        if align == "center":
+            lx = x + (width - draw.textlength(line, font=font)) / 2
+        else:
+            lx = x
+        draw.text((lx, y), line, font=font, fill=fill)
+        y += leading
+    return y
 
 
-def soft(rgb, frac=0.86):
-    """Blend a colour toward white."""
-    return tuple(int(round(c * (1.0 - frac) + 255 * frac)) for c in rgb)
+def draw_centred(draw, cx, y, text, font, fill):
+    w = draw.textlength(text, font=font)
+    draw.text((cx - w / 2, y), text, font=font, fill=fill)
 
 
-def centre(d, text, y, font_obj, colour):
-    d.text(((W - font_obj.getlength(text)) / 2, y), text,
-           font=font_obj, fill=colour)
+def star_points(cx, cy, outer, inner, spikes=8, tilt=-math.pi / 2):
+    pts = []
+    for i in range(spikes * 2):
+        r = outer if i % 2 == 0 else inner
+        a = tilt + i * math.pi / spikes
+        pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+    return pts
 
 
-# ------------------------------------------------------------------ symbols
-# Each draws a flat symbol centred on (cx, cy) in colour col.
-
-def sym_missile(d, cx, cy, col):
-    # cruise missile flying right, with a dashed flight path behind it
-    for i in range(4):
-        x0 = cx - 96 + i * 18
-        d.line([x0, cy - 46, x0 + 9, cy - 46], fill=col, width=5)
-    d.polygon([(cx - 52, cy - 12), (cx + 8, cy - 12), (cx + 46, cy),
-               (cx + 8, cy + 12), (cx - 52, cy + 12)], fill=col)
-    d.polygon([(cx - 52, cy - 12), (cx - 76, cy - 34), (cx - 76, cy - 8)],
-              fill=col)
-    d.polygon([(cx - 52, cy + 12), (cx - 76, cy + 34), (cx - 76, cy + 8)],
-              fill=col)
-    d.polygon([(cx + 46, cy), (cx + 78, cy - 16), (cx + 78, cy + 16)],
-              fill=col)
-    # small starburst at the nose tip
-    nx, ny = cx + 88, cy
-    for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-        d.line([nx + dx * 4, ny + dy * 4, nx + dx * 14, ny + dy * 14],
-               fill=col, width=4)
+def rotated_point(cx, cy, dx, dy, angle):
+    c, s = math.cos(angle), math.sin(angle)
+    return (cx + dx * c - dy * s, cy + dx * s + dy * c)
 
 
-def sym_falling_chart(d, cx, cy, col):
-    # three bars stepping down, with a falling arrow
-    d.rectangle([cx - 52, cy - 34, cx - 28, cy + 44], fill=col)
-    d.rectangle([cx - 12, cy - 8, cx + 12, cy + 44], fill=col)
-    d.rectangle([cx + 28, cy + 18, cx + 52, cy + 44], fill=col)
-    d.line([cx - 58, cy - 48, cx + 12, cy - 10], fill=col, width=6)
-    d.polygon([(cx + 30, cy - 20), (cx + 2, cy - 22),
-               (cx + 20, cy + 2)], fill=col)
+def missile_and_blast(draw, box):
+    """Slim diagonal missile crossing a burst star, pale red panel."""
+    x0, y0, x1, y1 = box
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    draw.rectangle(box, fill=PALE_RED)
+    draw.polygon(star_points(cx - 62, cy + 8, 44, 17), fill=(244, 196, 116))
+    draw.polygon(star_points(cx - 62, cy + 8, 26, 10), fill=(250, 220, 150))
+    ang = -math.radians(28)
+    nose = rotated_point(cx, cy, 96, 0, ang)
+    tail_top = rotated_point(cx, cy, -62, -13, ang)
+    tail_bot = rotated_point(cx, cy, -62, 13, ang)
+    mid_top = rotated_point(cx, cy, 26, -11, ang)
+    mid_bot = rotated_point(cx, cy, 26, 11, ang)
+    fin_top = rotated_point(cx, cy, -78, -34, ang)
+    fin_bot = rotated_point(cx, cy, -78, 34, ang)
+    fin_mid = rotated_point(cx, cy, -48, -9, ang)
+    fin_mid2 = rotated_point(cx, cy, -48, 9, ang)
+    draw.polygon([nose, mid_top, tail_top, fin_top, fin_mid, tail_bot,
+                  fin_bot, fin_mid2, mid_bot], fill=RED)
+    draw.polygon([rotated_point(cx, cy, -62, -6, ang),
+                  rotated_point(cx, cy, -92, -3, ang),
+                  rotated_point(cx, cy, -62, 6, ang)], fill=(122, 22, 18))
+    for k in range(3):
+        off = k * 14
+        draw.line([rotated_point(cx, cy, -104 - k * 5, -40 + off, ang),
+                   rotated_point(cx, cy, -84 - k * 5, -40 + off, ang)],
+                  fill=RED, width=4)
+    bx, by = cx + 88, cy - 72
+    draw.polygon(star_points(bx, by, 22, 9), fill=RED)
+    draw.text((bx - 5, by - 13), "!", font=sans_bold(22),
+              fill=(255, 255, 255))
 
 
-def sym_scales(d, cx, cy, col):
-    # scales of justice: beam, pillar, two pans
-    d.line([cx, cy - 44, cx, cy + 48], fill=col, width=6)
-    d.line([cx - 46, cy - 30, cx + 46, cy - 30], fill=col, width=6)
-    d.line([cx - 46, cy - 30, cx - 46, cy - 6], fill=col, width=4)
-    d.line([cx + 46, cy - 30, cx + 46, cy - 6], fill=col, width=4)
-    d.polygon([(cx - 62, cy - 6), (cx - 30, cy - 6), (cx - 46, cy + 22)],
-              outline=col, width=5)
-    d.polygon([(cx + 30, cy - 6), (cx + 62, cy - 6), (cx + 46, cy + 22)],
-              outline=col, width=5)
-    d.line([cx - 20, cy + 48, cx + 20, cy + 48], fill=col, width=6)
-    d.ellipse([cx - 6, cy - 52, cx + 6, cy - 40], fill=col)
+def falling_chart(draw, box):
+    """Line chart diving down over three bars; fits a ~92px strip."""
+    x0, y0, x1, y1 = box
+    draw.rectangle(box, fill=PALE_GOLD)
+    base = y1 - 10
+    gx = x0 + 18
+    for h in (40, 30, 20):
+        draw.rectangle([gx, base - h, gx + 28, base], fill=(178, 134, 34))
+        gx += 42
+    pts = [(x0 + 24, y0 + 14), (x0 + 80, y0 + 32), (x0 + 140, y0 + 28),
+           (x0 + 200, y0 + 62), (x0 + 244, y1 - 16)]
+    draw.line(pts, fill=RED, width=5, joint="curve")
+    for px, py in pts:
+        draw.ellipse([px - 5, py - 5, px + 5, py + 5], fill=RED)
+    draw.polygon([(x0 + 244, y1 - 16), (x0 + 222, y1 - 24),
+                  (x0 + 228, y1 - 2)], fill=RED)
+    label = "-3.7%"
+    lw = draw.textlength(label, font=sans_bold(20))
+    draw.text((x1 - lw - 14, y0 + 8), label, font=sans_bold(20), fill=RED)
 
 
-def sym_shield_crack(d, cx, cy, col):
-    # a shield split by a lightning crack
-    d.polygon([(cx - 42, cy - 44), (cx + 42, cy - 44), (cx + 42, cy + 4),
-               (cx, cy + 50), (cx - 42, cy + 4)], outline=col, width=6)
-    d.polygon([(cx + 6, cy - 38), (cx - 10, cy - 8), (cx + 2, cy - 8),
-               (cx - 8, cy + 30), (cx + 12, cy - 12), (cx, cy - 12)],
-              fill=col)
+def scales_of_justice(draw, box):
+    """A balance scale: post, beam, two hanging pans, base."""
+    x0, y0, x1, y1 = box
+    cx = (x0 + x1) / 2
+    draw.rectangle(box, fill=PALE_BLUE)
+    top = y0 + 6
+    draw.line([cx, top, cx, y1 - 16], fill=NAVY, width=6)
+    draw.line([cx - 70, top + 8, cx + 70, top + 8], fill=NAVY, width=5)
+    draw.ellipse([cx - 7, top - 6, cx + 7, top + 8], fill=NAVY)
+    for side in (-1, 1):
+        px = cx + side * 70
+        draw.line([px, top + 8, px - 22, top + 42], fill=NAVY, width=3)
+        draw.line([px, top + 8, px + 22, top + 42], fill=NAVY, width=3)
+        draw.line([px, top + 8, px, top + 42], fill=NAVY, width=3)
+        draw.pieslice([px - 25, top + 36, px + 25, top + 64],
+                      start=0, end=180, fill=NAVY)
+    draw.polygon([(cx - 28, y1 - 16), (cx + 28, y1 - 16), (cx, y1 - 34)],
+                 fill=NAVY)
+    draw.rectangle([cx - 44, y1 - 16, cx + 44, y1 - 6], fill=NAVY)
 
 
-def sym_rings(d, cx, cy, col):
-    # two interlocking rings, offset so the link reads clearly
-    d.ellipse([cx - 50, cy - 30, cx + 2, cy + 22], outline=col, width=7)
-    d.ellipse([cx - 2, cy - 22, cx + 50, cy + 30], outline=col, width=7)
+def medallion(draw, cx, cy, colour, glyph):
+    """Small coloured disc holding a white mini pictogram."""
+    draw.ellipse([cx - 22, cy - 22, cx + 22, cy + 22], fill=colour)
+    glyph(draw, cx, cy)
 
 
-def sym_gavel(d, cx, cy, col):
-    # a gavel swung down at 45 degrees: head square to the handle
-    d.line([cx - 8, cy - 8, cx + 38, cy + 38], fill=col, width=8)
-    # head: a parallelogram centred on (cx - 18, cy - 18), long axis
-    # perpendicular to the handle (direction (-1, 1) / (1, -1))
-    d.polygon([(cx - 44, cy - 32), (cx - 4, cy - 48), (cx + 8, cy - 8),
-               (cx - 32, cy + 8)], fill=col)
-    d.line([cx - 40, cy + 40, cx + 40, cy + 40], fill=col, width=7)
-    d.line([cx - 32, cy + 50, cx + 32, cy + 50], fill=col, width=5)
+def mini_padlock(draw, cx, cy):
+    draw.arc([cx - 10, cy - 16, cx + 10, cy + 4], start=180, end=360,
+             fill=(255, 255, 255), width=4)
+    draw.rounded_rectangle([cx - 13, cy - 2, cx + 13, cy + 18],
+                           radius=3, fill=(255, 255, 255))
+    draw.ellipse([cx - 3, cy + 3, cx + 3, cy + 9], fill=TEAL)
+    draw.polygon([(cx - 2, cy + 7), (cx + 2, cy + 7), (cx + 4, cy + 14),
+                  (cx - 4, cy + 14)], fill=TEAL)
 
 
-# ------------------------------------------------------------------- stories
-# (kicker, headline, standfirst, accent, symbol)
-LEAD = ("CONFLICT \u00b7 POLAND",
-        "RUSSIAN MISSILES LAND IN POLAND",
-        "A Kh-101 cruise missile and a drone come down in the south-east "
-        "during a huge overnight barrage on Ukraine. PM Tusk calls it a "
-        "deliberate provocation; NATO calls it a grave violation.",
-        CRIMSON, sym_missile)
-
-MIDDLE = [
-    ("MARKETS \u00b7 NEW YORK",
-     "WALL STREET SLIDES INTO CORRECTION",
-     "The S&P 500 falls 3.7% and the Nasdaq 5.3% as the AI sell-off "
-     "deepens. Anthropic drops 8.5%; Nvidia falls 14%.",
-     GOLD_DARK, sym_falling_chart),
-    ("JUSTICE \u00b7 THE HAGUE",
-     "MYANMAR GUILTY OF ROHINGYA GENOCIDE",
-     "The World Court finds a state guilty of genocide for the first "
-     "time ever. Myanmar rejects the ruling.",
-     NAVY, sym_scales),
-    ("CYBER \u00b7 FINANCE",
-     "HACKERS HIT JPMORGAN, VISA, MASTERCARD",
-     "Customer names and emails exposed in a breach of third-party "
-     "vendors. No card numbers taken; gang \u201cn0n\u201d claims it.",
-     (12, 110, 102), sym_shield_crack),
-]
-
-BOTTOM = [
-    ("DIPLOMACY \u00b7 BRUSSELS",
-     "UK AND EU SIGN NEW DEALS",
-     "Food trade, carbon markets and youth mobility: three deals "
-     "signed at a Brussels summit.",
-     (102, 68, 148), sym_rings),
-    ("POLITICS \u00b7 ISRAEL",
-     "EISENKOT ASKED TO FORM GOVERNMENT",
-     "President Herzog taps the former army chief, bypassing PM "
-     "Netanyahu.",
-     (44, 122, 48), sym_gavel),
-]
+def mini_globe(draw, cx, cy):
+    draw.ellipse([cx - 17, cy - 17, cx + 17, cy + 17],
+                 outline=(255, 255, 255), width=3)
+    draw.ellipse([cx - 7, cy - 17, cx + 7, cy + 17],
+                 outline=(255, 255, 255), width=2)
+    draw.line([cx - 17, cy, cx + 17, cy], fill=(255, 255, 255), width=2)
 
 
-def draw_lead(d, x, y, w, h, story):
-    kicker, headline, standfirst, accent, pic = story
-    d.rounded_rectangle([x, y, x + w, y + h], radius=10,
-                        fill=CARD, outline=RULE, width=2)
-    d.rounded_rectangle([x + 2, y + 2, x + 196, y + h - 2], radius=8,
-                        fill=soft(accent, 0.86))
-    pic(d, x + 99, y + h // 2, accent)
-    tx = x + 216
-    tw = w - 236
-    d.text((tx, y + 18), kicker, font=face(BOLD, 16), fill=accent)
-    hf, hrows = best_fit(headline, [36, 33, 30], tw, 1, BOLD)
-    hy = y + 46
-    for row in hrows:
-        d.text((tx, hy), row, font=hf, fill=INK)
-        hy += int(hf.size * 1.15)
-    df, drows = best_fit(standfirst, [19, 18], tw, 3, PLAIN)
-    dy = hy + 10
-    for row in drows:
-        d.text((tx, dy), row, font=df, fill=MUTED)
-        dy += int(df.size * 1.32)
+def mini_ballot(draw, cx, cy):
+    draw.rectangle([cx - 14, cy - 2, cx + 14, cy + 18], fill=(255, 255, 255))
+    draw.rectangle([cx - 8, cy - 6, cx + 8, cy - 2], fill=(255, 255, 255))
+    draw.text((cx - 8, cy + 1), "✓", font=sans_bold(16), fill=GREEN)
 
 
-def draw_mid_card(d, x, y, w, h, story):
-    kicker, headline, standfirst, accent, pic = story
-    d.rounded_rectangle([x, y, x + w, y + h], radius=10,
-                        fill=CARD, outline=RULE, width=2)
-    d.rounded_rectangle([x + 2, y + 2, x + w - 2, y + 102], radius=8,
-                        fill=soft(accent, 0.86))
-    pic(d, x + w // 2, y + 52, accent)
-    d.line([x + 12, y + 102, x + w - 12, y + 102], fill=RULE, width=2)
-    tx = x + 16
-    tw = w - 32
-    d.text((tx, y + 116), kicker, font=face(BOLD, 15), fill=accent)
-    hf, hrows = best_fit(headline, [26, 24, 22], tw, 3, BOLD)
-    hy = y + 142
-    for row in hrows:
-        d.text((tx, hy), row, font=hf, fill=INK)
-        hy += int(hf.size * 1.18)
-    df, drows = best_fit(standfirst, [17, 16], tw, 4, PLAIN)
-    dy = hy + 6
-    for row in drows:
-        d.text((tx, dy), row, font=df, fill=MUTED)
-        dy += int(df.size * 1.3)
+def card_frame(draw, box):
+    draw.rounded_rectangle(box, radius=10, fill=CARD, outline=CARD_EDGE,
+                           width=2)
 
 
-def draw_wide_card(d, x, y, w, h, story):
-    kicker, headline, standfirst, accent, pic = story
-    d.rounded_rectangle([x, y, x + w, y + h], radius=10,
-                        fill=CARD, outline=RULE, width=2)
-    d.rounded_rectangle([x + 2, y + 2, x + 150, y + h - 2], radius=8,
-                        fill=soft(accent, 0.86))
-    pic(d, x + 76, y + h // 2, accent)
-    tx = x + 168
-    tw = w - 186
-    d.text((tx, y + 16), kicker, font=face(BOLD, 15), fill=accent)
-    hf, hrows = best_fit(headline, [26, 24], tw, 2, BOLD)
-    hy = y + 42
-    for row in hrows:
-        d.text((tx, hy), row, font=hf, fill=INK)
-        hy += int(hf.size * 1.18)
-    df, drows = best_fit(standfirst, [17, 16], tw, 3, PLAIN)
-    dy = hy + 8
-    for row in drows:
-        d.text((tx, dy), row, font=df, fill=MUTED)
-        dy += int(df.size * 1.3)
+def kicker_and_headline(draw, x, y, width, tag, colour, headline, size):
+    draw.text((x, y), tag, font=sans_bold(17), fill=colour)
+    y += 26
+    return draw_block(draw, x, y, width, headline, sans_bold(size), INK,
+                      size + 6)
+
+
+def build_canvas():
+    img = Image.new("RGB", (CANVAS_W, CANVAS_H), PAPER)
+    d = ImageDraw.Draw(img)
+    d.rectangle([10, 10, 1013, 1013], outline=INK, width=2)
+
+    # ---- Masthead -------------------------------------------------
+    draw_centred(d, 512, 24, "THE WORLD IN ONE PICTURE",
+                 serif_bold(42), INK)
+    d.rectangle([60, 88, 964, 92], fill=RED)
+    d.rectangle([60, 96, 964, 98], fill=RED)
+    draw_centred(d, 512, 106, "SATURDAY  ·  21 NOVEMBER 2026",
+                 sans_bold(29), RED)
+
+    # ---- Lead story: Poland ---------------------------------------
+    card_frame(d, [26, 150, 998, 392])
+    missile_and_blast(d, [27, 151, 280, 391])
+    tx = 302
+    y = kicker_and_headline(d, tx, 166, 670, "CONFLICT  ·  POLAND", RED,
+                            "RUSSIAN MISSILE LANDS IN POLAND", 37)
+    y += 8
+    draw_block(d, tx, y, 670,
+               "A Kh-101 cruise missile and a drone came down in the "
+               "south-east during a huge overnight attack on Ukraine — "
+               "400+ drones and 110 missiles, at least eight killed. "
+               "Poland's PM calls it a deliberate provocation; NATO, a "
+               "grave violation.",
+               sans(20), SOFT_INK, 26)
+
+    # ---- Middle row: Markets + Justice ----------------------------
+    mid_y0, mid_y1 = 406, 672
+    middle = [
+        ([26, mid_y0, 505, mid_y1], falling_chart, "MARKETS  ·  NEW YORK",
+         GOLD, "WALL STREET FALLS INTO CORRECTION",
+         "The S&P 500 drops 3.7% and the Nasdaq 5.3% as the AI sell-off "
+         "deepens. Anthropic slides 8.5% on its second day listed; "
+         "Nvidia falls 14%."),
+        ([519, mid_y0, 998, mid_y1], scales_of_justice,
+         "JUSTICE  ·  THE HAGUE", NAVY, "MYANMAR FOUND GUILTY OF GENOCIDE",
+         "The World Court rules a state guilty of genocide for the "
+         "first time ever, over the Rohingya. Myanmar rejects the "
+         "verdict."),
+    ]
+    for box, art, tag, colour, head, body in middle:
+        card_frame(d, box)
+        art(d, [box[0] + 1, box[1] + 1, box[2] - 1, box[1] + 93])
+        cx = (box[0] + box[2]) / 2
+        inner = box[2] - box[0] - 44
+        y = box[1] + 102
+        tw = d.textlength(tag, font=sans_bold(16))
+        d.text((cx - tw / 2, y), tag, font=sans_bold(16), fill=colour)
+        y += 26
+        y = draw_block(d, box[0] + 22, y, inner, head, sans_bold(25), INK,
+                       30, align="center")
+        draw_block(d, box[0] + 22, y + 8, inner, body, sans(18), SOFT_INK,
+                   22, align="center")
+
+    # ---- Bottom row: Cyber, Diplomacy, Politics -------------------
+    bot_y0, bot_y1 = 686, 946
+    slots = [
+        ([26, bot_y0, 340, bot_y1], TEAL, mini_padlock,
+         "CYBER  ·  FINANCE", "HACKERS STRIKE JPMORGAN, VISA, MASTERCARD",
+         "Customer names and emails leak via outside suppliers. No card "
+         "numbers are taken. A gang calling itself “n0n” claims it."),
+        ([355, bot_y0, 669, bot_y1], PURPLE, mini_globe,
+         "DIPLOMACY  ·  BRUSSELS", "UK AND EU SIGN THREE NEW DEALS",
+         "Food trade, carbon markets and youth mobility: three "
+         "agreements are signed at a summit in Brussels."),
+        ([684, bot_y0, 998, bot_y1], GREEN, mini_ballot,
+         "POLITICS  ·  ISRAEL", "EISENKOT ASKED TO FORM A GOVERNMENT",
+         "President Herzog turns to the former army chief to build a "
+         "coalition, passing over Prime Minister Netanyahu."),
+    ]
+    for box, colour, glyph, tag, head, body in slots:
+        card_frame(d, box)
+        medallion(d, box[0] + 37, box[1] + 37, colour, glyph)
+        inner = box[2] - box[0] - 30
+        d.text((box[0] + 66, box[1] + 28), tag, font=sans_bold(15),
+               fill=colour)
+        y = box[1] + 66
+        y = draw_block(d, box[0] + 15, y, inner, head, sans_bold(23), INK,
+                       28, align="center")
+        draw_block(d, box[0] + 15, y + 7, inner, body, sans(17), SOFT_INK,
+                   22, align="center")
+
+    # ---- Footer ----------------------------------------------------
+    draw_centred(d, 512, 960,
+                 "Sources: AP · Reuters · BBC · UN News · CNN · Le Monde",
+                 sans(16), FOOTER_GREY)
+    draw_centred(d, 512, 982,
+                 "All six stories first reported on Saturday 21 November 2026",
+                 sans_bold(16), FOOTER_GREY)
+    return img
 
 
 def main():
-    img = Image.new("RGB", (W, H), PAPER)
-    d = ImageDraw.Draw(img)
-
-    # masthead
-    d.rectangle([20, 20, 1004, 168], fill=NAVY)
-    d.rectangle([20, 168, 1004, 174], fill=CRIMSON)
-    centre(d, "THE WORLD IN ONE PICTURE", 34, face(BOLD, 22), GOLD)
-    centre(d, "21 NOVEMBER 2026", 62, face(BOLD, 72), CARD)
-    centre(d, "SATURDAY  \u00b7  SIX STORIES THAT DEFINED THE DAY",
-           138, face(BOLD, 22), GOLD)
-
-    # lead story, full width
-    draw_lead(d, 20, 190, 984, 168, LEAD)
-
-    # three middle stories
-    cw, ch = 316, 336
-    gap = 18
-    for i, story in enumerate(MIDDLE):
-        x = 20 + i * (cw + gap)
-        draw_mid_card(d, x, 374, cw, ch, story)
-
-    # two wide stories at the bottom
-    bw, bh = 483, 216
-    for i, story in enumerate(BOTTOM):
-        x = 20 + i * (bw + gap)
-        draw_wide_card(d, x, 726, bw, bh, story)
-
-    # footer
-    centre(d, "SIX STORIES FROM SATURDAY 21 NOVEMBER 2026",
-           962, face(BOLD, 16), SLATE)
-
-    img.save(OUT_PATH, format="PNG", optimize=True)
-    print("wrote", OUT_PATH, os.path.getsize(OUT_PATH), "bytes")
+    here = os.path.dirname(os.path.abspath(__file__))
+    out_path = os.path.join(here, "entry.png")
+    build_canvas().save(out_path, format="PNG", optimize=True)
+    print("wrote", out_path)
 
 
 if __name__ == "__main__":

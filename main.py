@@ -1,45 +1,43 @@
 #!/usr/bin/env python3
-"""make.fun entry for news-image-20261121: "The World in One Day".
+"""Entry point for the news-image-20261121 competition.
 
-The graded program. It places the finished front-page image that ships
-in this repository at /output/entry.png.
-
-The picture was drawn at build time by gen_image.py (Pillow + DejaVu)
-from the verified world news of Saturday 21 November 2026: Russian
-missiles landing in Poland during a huge overnight barrage on
-Ukraine, Wall Street sliding into correction as the AI sell-off
-deepens, the World Court finding Myanmar guilty of Rohingya
-genocide, hackers hitting JPMorgan, Visa and Mastercard through
-third-party vendors, Britain and the EU signing new deals, and
-Israel's president asking Gadi Eisenkot to form the next government.
-
-This program does no drawing and needs no network: it copies fixed
-bytes, so the two graded runs write identical output. Standard
-library only; the output directory comes from MAKEFUN_OUTPUT_DIR
-outside the grader, or /output inside it.
+Copies the pre-rendered front-page image (entry.png, shipped in this
+repository) into the grader's output directory. Standard library only,
+no network, fully deterministic: the same bytes go out every run.
 """
 
 import os
 import shutil
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
 IMAGE_NAME = "entry.png"
 
 
+def locate_source():
+    """Path of the image sitting next to this file."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(here, IMAGE_NAME)
+
+
+def locate_target_dir():
+    """Grader output dir: MAKEFUN_OUTPUT_DIR, else /output."""
+    chosen = os.environ.get("MAKEFUN_OUTPUT_DIR") or "/output"
+    return chosen
+
+
 def run():
-    out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
-    os.makedirs(out_dir, exist_ok=True)
-    src = os.path.join(HERE, IMAGE_NAME)
-    dst = os.path.join(out_dir, IMAGE_NAME)
-    if not os.path.isfile(src):
-        print("entry image missing:", src, file=sys.stderr)
+    source = locate_source()
+    if not os.path.isfile(source):
+        print("missing image: " + source, file=sys.stderr)
         return 1
-    shutil.copyfile(src, dst)
-    if os.path.getsize(dst) != os.path.getsize(src):
-        print("incomplete copy:", dst, file=sys.stderr)
+    target_dir = locate_target_dir()
+    os.makedirs(target_dir, exist_ok=True)
+    target = os.path.join(target_dir, IMAGE_NAME)
+    shutil.copyfile(source, target)
+    if os.path.getsize(target) != os.path.getsize(source):
+        print("copy size mismatch: " + target, file=sys.stderr)
         return 1
-    print("wrote", dst, os.path.getsize(dst), "bytes")
+    print("copied " + source + " -> " + target)
     return 0
 
 
